@@ -1,0 +1,11 @@
+services:
+  bot:
+    build: .
+    image: listen-the-video:latest
+    container_name: listen-the-video
+    env_file:
+      - .env
+    volumes:
+      # Persist temporary downloads and output files on the host.
+      - ./data:/app/data
+    restart: unless-stopped
