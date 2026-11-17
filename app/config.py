@@ -17,7 +17,13 @@ def _get_optional_int(name: str) -> int | None:
     raw = os.getenv(name, "").strip()
     if not raw:
         return None
-    return int(raw)
+    try:
+        return int(raw)
+    except ValueError as exc:
+        raise RuntimeError(
+            f"{name} must be an integer, got {raw!r}. "
+            "Leave it empty to allow any user."
+        ) from exc
 
 
 @dataclass(frozen=True)
