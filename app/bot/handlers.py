@@ -4,16 +4,20 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from io import BytesIO
 
 from requests import RequestException
-from telegram import Update
+from telegram import Message, Update
 from telegram.constants import ChatAction
+from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 from yt_dlp.utils import DownloadError
 
 from app.bot.keyboards import build_candidates_keyboard, parse_pick_callback
 from app.config import Settings, get_settings
+from app.core.converter import ConversionError
 from app.core.models import Candidate, Track
+from app.core.pipeline import build_mp3, cleanup
 from app.core.resolver import resolve_input
 from app.core.youtube import build_query, search
 
@@ -23,15 +27,22 @@ logger = logging.getLogger(__name__)
 # global error handler instead of being silently swallowed.
 _RESOLVE_ERRORS = (RequestException, DownloadError, RuntimeError)
 _SEARCH_ERRORS = (DownloadError, RuntimeError)
+_DELIVERY_ERRORS = (
+    DownloadError,
+    ConversionError,
+    RequestException,
+    RuntimeError,
+    OSError,
+    TelegramError,
+)
 
 _CANDIDATES_KEY = "candidates"
-_SELECTED_KEY = "selected"
+_TRACK_KEY = "track"
 
 WELCOME_TEXT = (
     "Hi! I'm listen-the-video.\n\n"
-    "Send me a song name or a YouTube/Spotify link. I'll search YouTube and "
-    "show you the matches so you can pick one.\n\n"
-    "Downloading, converting and tagging the MP3 arrive in the next phase. "
+    "Send me a song name or a YouTube/Spotify link. I'll search YouTube, show "
+    "you the matches, and send back the MP3 with its metadata attached.\n\n"
     "Use /help to see the available commands."
 )
 
@@ -40,13 +51,13 @@ HELP_TEXT = (
     "- Send a song name, for example: Daft Punk - Instant Crush\n"
     "- Or send a YouTube link\n"
     "- Or send a Spotify link (used as a metadata reference)\n\n"
-    "I search YouTube and reply with the top matches. Pick one with the "
-    "buttons under the message.\n\n"
+    "Pick a result with the buttons under my reply and I'll download, convert "
+    "and tag the MP3 for you.\n\n"
     "Commands:\n"
     "/start - show the welcome message\n"
     "/help - show this help\n"
     "/id - show your Telegram user id\n\n"
-    "Note: downloading, converting and tagging the MP3 arrive in the next phase."
+    "Note: the public Telegram Bot API caps uploads at 50 MB."
 )
 
 PRIVATE_BOT_TEXT = "Sorry, this bot is private."
@@ -58,6 +69,10 @@ NO_RESULTS_TEXT = "I could not find anything on YouTube for that."
 EXPIRED_SELECTION_TEXT = (
     "That selection is no longer available. Send the song again for a fresh list."
 )
+PREPARING_TEXT = "Downloading, converting and tagging the MP3..."
+BUILD_FAILED_TEXT = "I could not prepare that track. Please try another match."
+SEND_FAILED_TEXT = "I could not send the MP3. Please try again."
+TOO_LARGE_TEXT = "That MP3 is {size:.1f} MB, over the {limit} MB Telegram limit."
 
 
 def _is_authorized(update: Update, settings: Settings) -> bool:
@@ -143,6 +158,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text(NO_RESULTS_TEXT)
         return
 
+    context.user_data[_TRACK_KEY] = track
     context.user_data[_CANDIDATES_KEY] = candidates
     await update.message.reply_text(
         _format_candidates_prompt(track, candidates),
@@ -158,21 +174,63 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     await query.answer()
 
-    index = parse_pick_callback(query.data or "")
-    candidates = (context.user_data or {}).get(_CANDIDATES_KEY) or []
+    settings = get_settings()
+    if not _is_authorized(update, settings):
+        await query.message.reply_text(PRIVATE_BOT_TEXT)
+        return
 
-    if index is None or not 0 <= index < len(candidates):
+    state = context.user_data or {}
+    track = state.get(_TRACK_KEY)
+    candidates = state.get(_CANDIDATES_KEY) or []
+    index = parse_pick_callback(query.data or "")
+
+    if track is None or index is None or not 0 <= index < len(candidates):
         await query.message.reply_text(EXPIRED_SELECTION_TEXT)
         return
 
     candidate = candidates[index]
-    context.user_data[_SELECTED_KEY] = candidate
     logger.info("User %s selected %s", update.effective_user.id, candidate.url)
 
-    await query.edit_message_text(
-        f"{candidate.title}\n\n"
-        "Downloading, converting and tagging arrive in the next phase."
-    )
+    # Editing the text also drops the inline keyboard.
+    await query.edit_message_text(f"Selected: {candidate.title}")
+    await _deliver_track(query.message, track, candidate, settings)
+
+
+async def _deliver_track(
+    message: Message, track: Track, candidate: Candidate, settings: Settings
+) -> None:
+    """Build the MP3 and send it back to the user."""
+    status = await message.reply_text(PREPARING_TEXT)
+
+    try:
+        built = await asyncio.to_thread(build_mp3, track, candidate, settings)
+    except _DELIVERY_ERRORS:
+        logger.exception("Failed to build the MP3 for %s", candidate.url)
+        await status.edit_text(BUILD_FAILED_TEXT)
+        return
+
+    try:
+        size_mb = built.path.stat().st_size / (1024 * 1024)
+        if size_mb > settings.max_upload_mb:
+            await status.edit_text(
+                TOO_LARGE_TEXT.format(size=size_mb, limit=settings.max_upload_mb)
+            )
+            return
+
+        # Reading and uploading can take a while for a full-length track.
+        data = await asyncio.to_thread(built.path.read_bytes)
+        await message.reply_audio(
+            audio=BytesIO(data),
+            filename=built.path.name,
+            title=built.metadata.title or track.title,
+            performer=built.metadata.artist or track.artist,
+        )
+        await status.delete()
+    except _DELIVERY_ERRORS:
+        logger.exception("Failed to send the MP3 for %s", candidate.url)
+        await status.edit_text(SEND_FAILED_TEXT)
+    finally:
+        cleanup(built)
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:

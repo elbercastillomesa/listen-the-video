@@ -3,15 +3,34 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from typing import Callable
 from unittest.mock import AsyncMock, MagicMock
 
 from telegram import Update
+from telegram.error import TelegramError
 from yt_dlp.utils import DownloadError
 
 from app.bot import handlers
 from app.config import Settings
+from app.core.converter import ConversionError
+from app.core.metadata import TrackMetadata
 from app.core.models import Candidate, Source, Track
+from app.core.pipeline import BuiltTrack
+
+
+def _make_message() -> MagicMock:
+    """Build a fake Message whose reply_text returns an editable status message."""
+    status = MagicMock()
+    status.edit_text = AsyncMock()
+    status.delete = AsyncMock()
+
+    message = MagicMock()
+    message.reply_text = AsyncMock(return_value=status)
+    message.reply_chat_action = AsyncMock()
+    message.reply_audio = AsyncMock()
+    message.status = status
+    return message
 
 
 def _make_update(
@@ -23,9 +42,8 @@ def _make_update(
         update.effective_user = None
     else:
         update.effective_user.id = user_id
+    update.message = _make_message()
     update.message.text = text
-    update.message.reply_text = AsyncMock()
-    update.message.reply_chat_action = AsyncMock()
     return update
 
 
@@ -43,8 +61,25 @@ def _make_callback_update(data: str | None = "pick:0") -> MagicMock:
     update.callback_query.data = data
     update.callback_query.answer = AsyncMock()
     update.callback_query.edit_message_text = AsyncMock()
-    update.callback_query.message.reply_text = AsyncMock()
+    update.callback_query.message = _make_message()
     return update
+
+
+def _make_built(tmp_path: Path, *, size: int = 10) -> BuiltTrack:
+    """Build a BuiltTrack backed by a real file inside a work directory."""
+    work_dir = tmp_path / "work"
+    work_dir.mkdir(exist_ok=True)
+    path = work_dir / "song.mp3"
+    path.write_bytes(b"x" * size)
+    return BuiltTrack(
+        path=path, metadata=TrackMetadata(title="Song", artist="Band")
+    )
+
+
+def _with_selection(context: MagicMock, candidate: Candidate | None = None) -> None:
+    """Populate the state handle_message would have stored."""
+    context.user_data["track"] = Track(title="Song", artist="Band")
+    context.user_data["candidates"] = [candidate or Candidate(title="First", url="u1")]
 
 
 class TestFormatCandidatesPrompt:
@@ -166,6 +201,7 @@ class TestHandleMessage:
 
         asyncio.run(handlers.handle_message(update, context))
 
+        assert context.user_data["track"] == track
         assert context.user_data["candidates"] == candidates
         (message,) = update.message.reply_text.await_args.args
         assert "1. First" in message
@@ -252,33 +288,143 @@ class TestHandleMessage:
 
 
 class TestHandleCallback:
-    def test_stores_selection_and_confirms(self) -> None:
-        candidates = [
-            Candidate(title="First", url="u1"),
-            Candidate(title="Second", url="u2"),
-        ]
+    def test_delivers_the_selected_track(
+        self,
+        monkeypatch,
+        make_settings: Callable[..., Settings],
+        tmp_path: Path,
+    ) -> None:
+        monkeypatch.setattr(handlers, "get_settings", lambda: make_settings())
+        built = _make_built(tmp_path)
+        monkeypatch.setattr(
+            handlers, "build_mp3", lambda track, candidate, settings: built
+        )
         context = _make_context()
-        context.user_data["candidates"] = candidates
-        update = _make_callback_update("pick:1")
+        _with_selection(context, Candidate(title="First", url="u1"))
+        update = _make_callback_update("pick:0")
 
         asyncio.run(handlers.handle_callback(update, context))
 
-        assert context.user_data["selected"] == candidates[1]
-        (message,) = update.callback_query.edit_message_text.await_args.args
-        assert "Second" in message
+        (selected,) = update.callback_query.edit_message_text.await_args.args
+        assert "First" in selected
+        audio = update.callback_query.message.reply_audio.await_args.kwargs
+        assert audio["title"] == "Song"
+        assert audio["performer"] == "Band"
+        assert audio["filename"] == "song.mp3"
 
-    def test_answers_the_callback_query(self) -> None:
+    def test_removes_the_work_dir_after_sending(
+        self,
+        monkeypatch,
+        make_settings: Callable[..., Settings],
+        tmp_path: Path,
+    ) -> None:
+        monkeypatch.setattr(handlers, "get_settings", lambda: make_settings())
+        built = _make_built(tmp_path)
+        work_dir = built.path.parent
+        monkeypatch.setattr(
+            handlers, "build_mp3", lambda track, candidate, settings: built
+        )
         context = _make_context()
-        context.user_data["candidates"] = [Candidate(title="First", url="u1")]
-        update = _make_callback_update("pick:0")
+        _with_selection(context)
+
+        asyncio.run(handlers.handle_callback(_make_callback_update(), context))
+
+        assert not work_dir.exists()
+
+    def test_reports_build_failure(
+        self,
+        monkeypatch,
+        make_settings: Callable[..., Settings],
+    ) -> None:
+        monkeypatch.setattr(handlers, "get_settings", lambda: make_settings())
+
+        def _fail(track: Track, candidate: Candidate, settings: Settings) -> BuiltTrack:
+            raise ConversionError("ffmpeg failed")
+
+        monkeypatch.setattr(handlers, "build_mp3", _fail)
+        context = _make_context()
+        _with_selection(context)
+        update = _make_callback_update()
+
+        asyncio.run(handlers.handle_callback(update, context))
+
+        update.callback_query.message.status.edit_text.assert_awaited_once_with(
+            handlers.BUILD_FAILED_TEXT
+        )
+        update.callback_query.message.reply_audio.assert_not_awaited()
+
+    def test_reports_file_over_the_upload_limit(
+        self,
+        monkeypatch,
+        make_settings: Callable[..., Settings],
+        tmp_path: Path,
+    ) -> None:
+        settings = make_settings(max_upload_mb=1)
+        monkeypatch.setattr(handlers, "get_settings", lambda: settings)
+        built = _make_built(tmp_path, size=1_100_000)
+        monkeypatch.setattr(
+            handlers, "build_mp3", lambda track, candidate, settings: built
+        )
+        context = _make_context()
+        _with_selection(context)
+        update = _make_callback_update()
+
+        asyncio.run(handlers.handle_callback(update, context))
+
+        (message,) = update.callback_query.message.status.edit_text.await_args.args
+        assert "over the 1 MB" in message
+        update.callback_query.message.reply_audio.assert_not_awaited()
+
+    def test_reports_send_failure(
+        self,
+        monkeypatch,
+        make_settings: Callable[..., Settings],
+        tmp_path: Path,
+    ) -> None:
+        monkeypatch.setattr(handlers, "get_settings", lambda: make_settings())
+        built = _make_built(tmp_path)
+        work_dir = built.path.parent
+        monkeypatch.setattr(
+            handlers, "build_mp3", lambda track, candidate, settings: built
+        )
+        context = _make_context()
+        _with_selection(context)
+        update = _make_callback_update()
+        update.callback_query.message.reply_audio = AsyncMock(
+            side_effect=TelegramError("too big")
+        )
+
+        asyncio.run(handlers.handle_callback(update, context))
+
+        update.callback_query.message.status.edit_text.assert_awaited_once_with(
+            handlers.SEND_FAILED_TEXT
+        )
+        assert not work_dir.exists()
+
+    def test_answers_the_callback_query(
+        self,
+        monkeypatch,
+        make_settings: Callable[..., Settings],
+        tmp_path: Path,
+    ) -> None:
+        monkeypatch.setattr(handlers, "get_settings", lambda: make_settings())
+        monkeypatch.setattr(
+            handlers, "build_mp3", lambda track, candidate, settings: _make_built(tmp_path)
+        )
+        context = _make_context()
+        _with_selection(context)
+        update = _make_callback_update()
 
         asyncio.run(handlers.handle_callback(update, context))
 
         update.callback_query.answer.assert_awaited_once()
 
-    def test_rejects_out_of_range_index(self) -> None:
+    def test_rejects_out_of_range_index(
+        self, monkeypatch, make_settings: Callable[..., Settings]
+    ) -> None:
+        monkeypatch.setattr(handlers, "get_settings", lambda: make_settings())
         context = _make_context()
-        context.user_data["candidates"] = [Candidate(title="First", url="u1")]
+        _with_selection(context)
         update = _make_callback_update("pick:9")
 
         asyncio.run(handlers.handle_callback(update, context))
@@ -288,9 +434,12 @@ class TestHandleCallback:
         )
         update.callback_query.edit_message_text.assert_not_awaited()
 
-    def test_rejects_malformed_callback(self) -> None:
+    def test_rejects_malformed_callback(
+        self, monkeypatch, make_settings: Callable[..., Settings]
+    ) -> None:
+        monkeypatch.setattr(handlers, "get_settings", lambda: make_settings())
         context = _make_context()
-        context.user_data["candidates"] = [Candidate(title="First", url="u1")]
+        _with_selection(context)
         update = _make_callback_update("nonsense")
 
         asyncio.run(handlers.handle_callback(update, context))
@@ -299,13 +448,33 @@ class TestHandleCallback:
             handlers.EXPIRED_SELECTION_TEXT
         )
 
-    def test_rejects_when_no_candidates_stored(self) -> None:
+    def test_rejects_when_state_is_missing(
+        self, monkeypatch, make_settings: Callable[..., Settings]
+    ) -> None:
+        monkeypatch.setattr(handlers, "get_settings", lambda: make_settings())
         update = _make_callback_update("pick:0")
 
         asyncio.run(handlers.handle_callback(update, _make_context()))
 
         update.callback_query.message.reply_text.assert_awaited_once_with(
             handlers.EXPIRED_SELECTION_TEXT
+        )
+
+    def test_blocks_unauthorized_user(
+        self, monkeypatch, make_settings: Callable[..., Settings]
+    ) -> None:
+        monkeypatch.setattr(
+            handlers, "get_settings", lambda: make_settings(allowed_user_id=7)
+        )
+        context = _make_context()
+        _with_selection(context)
+        update = _make_callback_update("pick:0")
+        update.effective_user.id = 8
+
+        asyncio.run(handlers.handle_callback(update, context))
+
+        update.callback_query.message.reply_text.assert_awaited_once_with(
+            handlers.PRIVATE_BOT_TEXT
         )
 
     def test_ignores_missing_callback_query(self) -> None:
