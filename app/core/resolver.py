@@ -79,12 +79,24 @@ def resolve_input(text: str) -> Track:
 def resolve_text(text: str) -> Track:
     """Resolve a plain song name into a Track."""
     cleaned = _clean_title(text)
-    parts = _ARTIST_TITLE_SEP_RE.split(cleaned, maxsplit=1)
-
-    if len(parts) == 2 and parts[0].strip() and parts[1].strip():
-        return Track(title=parts[1].strip(), artist=parts[0].strip(), source=Source.TEXT)
+    artist, title = split_artist_title(cleaned)
+    if artist:
+        return Track(title=title, artist=artist, source=Source.TEXT)
 
     return Track(title=cleaned, source=Source.TEXT)
+
+
+def split_artist_title(text: str) -> tuple[str | None, str]:
+    """Split "Artist - Title" text into (artist, title).
+
+    Returns (None, cleaned_text) when no artist/title separator is found so
+    callers can still use the cleaned text as the title.
+    """
+    cleaned = _clean_title(text)
+    parts = _ARTIST_TITLE_SEP_RE.split(cleaned, maxsplit=1)
+    if len(parts) == 2 and parts[0].strip() and parts[1].strip():
+        return parts[0].strip(), parts[1].strip()
+    return None, cleaned
 
 
 def resolve_youtube(url: str) -> Track:

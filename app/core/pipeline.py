@@ -16,6 +16,7 @@ from app.config import Settings
 from app.core.converter import convert_to_mp3
 from app.core.metadata import TrackMetadata, fetch_metadata
 from app.core.models import Candidate, Track
+from app.core.resolver import split_artist_title
 from app.core.tagger import tag_mp3
 from app.core.youtube import download_audio
 
@@ -45,7 +46,7 @@ def build_mp3(track: Track, candidate: Candidate, settings: Settings) -> BuiltTr
     try:
         source = download_audio(candidate.url, work_dir)
         mp3 = convert_to_mp3(source, settings.mp3_bitrate, dest_dir=work_dir)
-        metadata = fetch_metadata(track)
+        metadata = fetch_metadata(_enrich_track(track, candidate))
         tag_mp3(mp3, metadata)
     except Exception:
         shutil.rmtree(work_dir, ignore_errors=True)
@@ -53,6 +54,28 @@ def build_mp3(track: Track, candidate: Candidate, settings: Settings) -> BuiltTr
 
     logger.info("Built %s", mp3)
     return BuiltTrack(path=mp3, metadata=metadata)
+
+
+def _enrich_track(track: Track, candidate: Candidate) -> Track:
+    """Fill in a missing artist from the candidate's YouTube title.
+
+    Users often type just the song name ("505") which the resolver cannot split
+    into artist/title. YouTube video titles almost always carry the canonical
+    "Artist - Title" form, so the chosen candidate is used to recover the
+    artist when the resolved track is missing one.
+    """
+    if track.artist:
+        return track
+
+    artist, title = split_artist_title(candidate.title)
+    if artist:
+        return Track(
+            title=title or track.title,
+            artist=artist,
+            source=track.source,
+            source_url=track.source_url,
+        )
+    return track
 
 
 def cleanup(built: BuiltTrack) -> None:
