@@ -32,9 +32,13 @@ SPOTIFY_URL_RE = re.compile(
 )
 
 # Noise commonly appended to YouTube titles, e.g. "(Official Video)" or "[HD]".
+# Keywords are matched as whole words so that bracketed text such as
+# "(Audiotree Live)" is not mistaken for noise.
 _NOISE_RE = re.compile(
     r"\s*[\(\[]"
-    r"[^\)\]]*(?:official|lyric|audio|video|visualizer|remaster|hd|hq|4k|mv|m/v)[^\)\]]*"
+    r"[^\)\]]*"
+    r"\b(?:official|lyrics?|audio|videos?|visuali[sz]er|remaster(?:ed)?|hd|hq|4k|mv|m/v)\b"
+    r"[^\)\]]*"
     r"[\)\]]",
     re.IGNORECASE,
 )
@@ -47,10 +51,8 @@ _CRAWLER_UA = (
     "(+https://developers.facebook.com/docs/sharing/webmasters/crawler)"
 )
 
-_OG_TITLE_RE = re.compile(r'<meta property="og:title" content="([^"]*)"', re.IGNORECASE)
-_OG_DESCRIPTION_RE = re.compile(
-    r'<meta property="og:description" content="([^"]*)"', re.IGNORECASE
-)
+_META_TAG_RE = re.compile(r"<meta\b[^>]*>", re.IGNORECASE)
+_META_ATTR_RE = re.compile(r"""([\w:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')""")
 
 
 def detect_source(text: str) -> Source:
@@ -119,15 +121,16 @@ def resolve_spotify(url: str) -> Track:
     response = requests.get(url, timeout=15, headers={"User-Agent": _CRAWLER_UA})
     response.raise_for_status()
 
-    title = _og_value(_OG_TITLE_RE, response.text)
-    description = _og_value(_OG_DESCRIPTION_RE, response.text)
+    title = _og_value("og:title", response.text)
+    description = _og_value("og:description", response.text)
 
     if not title:
         raise RuntimeError(f"Could not read Spotify metadata from {url}")
 
     # Spotify descriptions look like "Artist · Album · Song · 1987".
+    # Only the first field is an artist when the separator is present.
     artist = None
-    if description:
+    if description and "·" in description:
         artist = description.split("·")[0].strip() or None
 
     return Track(
@@ -145,17 +148,25 @@ def _extract_youtube_info(url: str) -> dict:
         "no_warnings": True,
         "skip_download": True,
         "noplaylist": True,
+        # Fail fast instead of blocking the worker thread if the network stalls.
+        "socket_timeout": 30,
     }
     with yt_dlp.YoutubeDL(options) as ydl:
         info = ydl.extract_info(url, download=False)
     return info or {}
 
 
-def _og_value(pattern: re.Pattern[str], document: str) -> str | None:
-    match = pattern.search(document)
-    if not match:
-        return None
-    return html.unescape(match.group(1)).strip() or None
+def _og_value(property_name: str, document: str) -> str | None:
+    """Extract the content of an Open Graph <meta> tag, ignoring attribute order."""
+    for tag in _META_TAG_RE.findall(document):
+        attributes = {
+            match.group(1).lower(): match.group(2) or match.group(3)
+            for match in _META_ATTR_RE.finditer(tag)
+        }
+        if attributes.get("property") == property_name:
+            value = attributes.get("content", "").strip()
+            return html.unescape(value) or None
+    return None
 
 
 def _clean_title(title: str) -> str:

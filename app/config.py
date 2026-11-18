@@ -50,10 +50,16 @@ def get_settings() -> Settings:
             "TELEGRAM_BOT_TOKEN is not set. Copy .env.example to .env and fill it in."
         )
 
+    max_upload_mb = _get_optional_int("MAX_UPLOAD_MB")
+    if max_upload_mb is not None and max_upload_mb <= 0:
+        raise RuntimeError(
+            f"MAX_UPLOAD_MB must be a positive integer, got {max_upload_mb}."
+        )
+
     return Settings(
         telegram_bot_token=token,
         allowed_user_id=_get_optional_int("ALLOWED_USER_ID"),
         data_dir=Path(os.getenv("DATA_DIR", "data")).expanduser(),
         mp3_bitrate=os.getenv("MP3_BITRATE", "320k").strip() or "320k",
-        max_upload_mb=_get_optional_int("MAX_UPLOAD_MB") or 50,
+        max_upload_mb=max_upload_mb or 50,
     )

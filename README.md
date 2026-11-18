@@ -53,3 +53,27 @@ In development. The initial version targets **personal use** (single user). Plan
 - A Telegram bot token (via [@BotFather](https://t.me/BotFather)).
 - `ffmpeg` available on the system (bundled in the Docker image).
 - Docker (recommended) or Python 3.11+ installed locally.
+
+## Testing
+
+Tests live in `tests/` and run with pytest. Network calls are mocked, so the
+suite is deterministic and runs offline.
+
+| File | Covers |
+| --- | --- |
+| `tests/conftest.py` | Shared fixtures (`make_settings`). |
+| `tests/test_config.py` | Environment loading, defaults, and validation errors. |
+| `tests/test_resolver.py` | Input detection and track resolution for plain text, YouTube, and Spotify. |
+| `tests/test_handlers.py` | Commands, message handling, authorization, and the error handler. |
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
+Or inside the Docker image:
+
+```bash
+docker run --rm -v "$PWD:/src" -w /src listen-the-video:latest \
+  sh -c "pip install -q -r requirements-dev.txt && pytest"
+```

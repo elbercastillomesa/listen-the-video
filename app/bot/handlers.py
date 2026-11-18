@@ -8,12 +8,18 @@ import logging
 from telegram import Update
 from telegram.constants import ChatAction
 from telegram.ext import ContextTypes
+from requests import RequestException
+from yt_dlp.utils import DownloadError
 
 from app.config import Settings, get_settings
 from app.core.models import Track
 from app.core.resolver import resolve_input
 
 logger = logging.getLogger(__name__)
+
+# Errors expected while resolving user input. Anything else bubbles up to the
+# global error handler instead of being silently swallowed.
+_RESOLVE_ERRORS = (RequestException, DownloadError, RuntimeError)
 
 WELCOME_TEXT = (
     "Hi! I'm listen-the-video.\n\n"
@@ -106,7 +112,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     try:
         # The resolver performs blocking network calls; keep them off the loop.
         track = await asyncio.to_thread(resolve_input, text)
-    except Exception:
+    except _RESOLVE_ERRORS:
         logger.exception("Failed to resolve input: %s", text)
         await update.message.reply_text(
             "I could not resolve that input. "
