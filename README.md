@@ -59,6 +59,13 @@ In development. The initial version targets **personal use** (single user). Plan
 Tests live in `tests/` and run with pytest. Network calls are mocked, so the
 suite is deterministic and runs offline.
 
+| File | Covers |
+| --- | --- |
+| `tests/conftest.py` | Shared fixtures (`make_settings`). |
+| `tests/test_config.py` | Environment loading, defaults, and validation errors. |
+| `tests/test_resolver.py` | Input detection and track resolution for plain text, YouTube, and Spotify. |
+| `tests/test_handlers.py` | Commands, message handling, authorization, and the error handler. |
+
 ```bash
 pip install -r requirements-dev.txt
 pytest
