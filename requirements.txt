@@ -1,0 +1,22 @@
+# Runtime dependencies for the Telegram bot.
+# Versions are pinned to the releases verified in the Docker build.
+
+# Telegram bot framework.
+python-telegram-bot==22.8
+
+# YouTube search and audio download.
+# Pinned to a known-working release; yt-dlp needs periodic updates to keep
+# working as YouTube changes, so bump this version when downloads start failing.
+yt-dlp==2026.10.26
+
+# ID3 tag writing (including embedded cover art).
+mutagen==1.48.1
+
+# HTTP client for the metadata APIs (MusicBrainz, Cover Art Archive, Deezer).
+requests==2.34.2
+
+# Environment variable loading.
+python-dotenv==1.2.4
+
+# MusicBrainz client (free music metadata database, no API key required).
+musicbrainzngs==0.7.1
