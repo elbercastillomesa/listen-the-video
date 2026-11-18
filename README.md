@@ -66,6 +66,8 @@ suite is deterministic and runs offline.
 | `tests/test_resolver.py` | Input detection and track resolution for plain text, YouTube, and Spotify. |
 | `tests/test_youtube.py` | YouTube search and audio download (yt-dlp mocked). |
 | `tests/test_converter.py` | MP3 conversion with ffmpeg (subprocess mocked). |
+| `tests/test_metadata.py` | Metadata lookup across MusicBrainz and Deezer (both mocked). |
+| `tests/test_tagger.py` | ID3 tagging and cover art embedding with mutagen. |
 | `tests/test_handlers.py` | Commands, message handling, authorization, and the error handler. |
 
 ```bash
