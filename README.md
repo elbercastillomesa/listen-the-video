@@ -65,6 +65,7 @@ suite is deterministic and runs offline.
 | `tests/test_config.py` | Environment loading, defaults, and validation errors. |
 | `tests/test_resolver.py` | Input detection and track resolution for plain text, YouTube, and Spotify. |
 | `tests/test_youtube.py` | YouTube search and audio download (yt-dlp mocked). |
+| `tests/test_converter.py` | MP3 conversion with ffmpeg (subprocess mocked). |
 | `tests/test_handlers.py` | Commands, message handling, authorization, and the error handler. |
 
 ```bash
