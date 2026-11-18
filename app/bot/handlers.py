@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from telegram import Update
+from telegram.constants import ChatAction
 from telegram.ext import ContextTypes
 
 from app.config import Settings, get_settings
+from app.core.models import Track
+from app.core.resolver import resolve_input
 
 logger = logging.getLogger(__name__)
 
@@ -73,11 +77,22 @@ async def id_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await update.message.reply_text(f"Your Telegram user id is: {user.id}")
 
 
+def _format_track(track: Track) -> str:
+    lines = [f"Title: {track.title}"]
+    if track.artist:
+        lines.append(f"Artist: {track.artist}")
+    lines.append(f"Source: {track.source.value}")
+    lines.append("")
+    lines.append("The download pipeline is not wired up yet (coming in the next phases).")
+    return "\n".join(lines)
+
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle a plain text message.
 
-    This is a placeholder for now: it acknowledges the input. The search,
-    download, conversion and tagging steps are implemented in later phases.
+    Resolves the input (song name, YouTube link or Spotify link) into a
+    canonical track. The download, conversion and tagging steps are
+    implemented in later phases.
     """
     if not _is_authorized(update, get_settings()):
         await update.message.reply_text(PRIVATE_BOT_TEXT)
@@ -86,10 +101,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     text = (update.message.text or "").strip()
     logger.info("Received message from user %s: %s", update.effective_user.id, text)
 
-    await update.message.reply_text(
-        f'Got it: "{text}"\n\n'
-        "The download pipeline is not ready yet; it lands in the next phases."
-    )
+    await update.message.reply_chat_action(ChatAction.TYPING)
+
+    try:
+        # The resolver performs blocking network calls; keep them off the loop.
+        track = await asyncio.to_thread(resolve_input, text)
+    except Exception:
+        logger.exception("Failed to resolve input: %s", text)
+        await update.message.reply_text(
+            "I could not resolve that input. "
+            "Try a song name or a YouTube/Spotify link."
+        )
+        return
+
+    await update.message.reply_text(_format_track(track))
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
