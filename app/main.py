@@ -7,6 +7,7 @@ import logging
 from telegram.ext import (
     Application,
     ApplicationBuilder,
+    CallbackQueryHandler,
     CommandHandler,
     MessageHandler,
     filters,
@@ -29,6 +30,9 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("id", handlers.id_command))
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.handle_message)
+    )
+    application.add_handler(
+        CallbackQueryHandler(handlers.handle_callback, pattern=r"^pick:")
     )
     application.add_error_handler(handlers.error_handler)
 

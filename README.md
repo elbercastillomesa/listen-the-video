@@ -68,7 +68,8 @@ suite is deterministic and runs offline.
 | `tests/test_converter.py` | MP3 conversion with ffmpeg (subprocess mocked). |
 | `tests/test_metadata.py` | Metadata lookup across MusicBrainz and Deezer (both mocked). |
 | `tests/test_tagger.py` | ID3 tagging and cover art embedding with mutagen. |
-| `tests/test_handlers.py` | Commands, message handling, authorization, and the error handler. |
+| `tests/test_keyboards.py` | Candidate buttons and callback data parsing. |
+| `tests/test_handlers.py` | Commands, search, result selection, authorization, and the error handler. |
 
 ```bash
 pip install -r requirements-dev.txt
