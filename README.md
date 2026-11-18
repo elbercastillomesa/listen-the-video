@@ -69,7 +69,8 @@ suite is deterministic and runs offline.
 | `tests/test_metadata.py` | Metadata lookup across MusicBrainz and Deezer (both mocked). |
 | `tests/test_tagger.py` | ID3 tagging and cover art embedding with mutagen. |
 | `tests/test_keyboards.py` | Candidate buttons and callback data parsing. |
-| `tests/test_handlers.py` | Commands, search, result selection, authorization, and the error handler. |
+| `tests/test_pipeline.py` | Download, convert and tag pipeline plus work-dir cleanup. |
+| `tests/test_handlers.py` | Commands, search, result selection, MP3 delivery, authorization, and the error handler. |
 
 ```bash
 pip install -r requirements-dev.txt

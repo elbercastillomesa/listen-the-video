@@ -1,0 +1,60 @@
+"""Run the download, conversion and tagging steps end to end.
+
+Everything happens in a throwaway directory under DATA_DIR so that a failure
+never leaves half-built files behind. Call `cleanup` once the MP3 has been sent.
+"""
+
+from __future__ import annotations
+
+import logging
+import shutil
+import tempfile
+from dataclasses import dataclass
+from pathlib import Path
+
+from app.config import Settings
+from app.core.converter import convert_to_mp3
+from app.core.metadata import TrackMetadata, fetch_metadata
+from app.core.models import Candidate, Track
+from app.core.tagger import tag_mp3
+from app.core.youtube import download_audio
+
+logger = logging.getLogger(__name__)
+
+_WORK_DIR_PREFIX = "track-"
+
+
+@dataclass(frozen=True)
+class BuiltTrack:
+    """A finished MP3 together with the metadata written onto it."""
+
+    path: Path
+    metadata: TrackMetadata
+
+
+def build_mp3(track: Track, candidate: Candidate, settings: Settings) -> BuiltTrack:
+    """Download, convert and tag the chosen candidate.
+
+    Raises:
+        The underlying error from whichever step fails (yt-dlp, ffmpeg or
+        mutagen), after removing the working directory.
+    """
+    settings.data_dir.mkdir(parents=True, exist_ok=True)
+    work_dir = Path(tempfile.mkdtemp(prefix=_WORK_DIR_PREFIX, dir=settings.data_dir))
+
+    try:
+        source = download_audio(candidate.url, work_dir)
+        mp3 = convert_to_mp3(source, settings.mp3_bitrate, dest_dir=work_dir)
+        metadata = fetch_metadata(track)
+        tag_mp3(mp3, metadata)
+    except Exception:
+        shutil.rmtree(work_dir, ignore_errors=True)
+        raise
+
+    logger.info("Built %s", mp3)
+    return BuiltTrack(path=mp3, metadata=metadata)
+
+
+def cleanup(built: BuiltTrack) -> None:
+    """Remove the working directory that holds the built MP3."""
+    shutil.rmtree(built.path.parent, ignore_errors=True)
