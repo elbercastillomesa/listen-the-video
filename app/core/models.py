@@ -22,3 +22,13 @@ class Track:
     artist: str | None = None
     source: Source = Source.TEXT
     source_url: str | None = None
+
+
+@dataclass(frozen=True)
+class Candidate:
+    """A YouTube search result the user can choose from."""
+
+    title: str
+    url: str
+    artist: str | None = None
+    duration: int | None = None
