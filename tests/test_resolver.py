@@ -84,6 +84,28 @@ class TestResolveText:
         assert track.title == "Some Song (Audiotree Live)"
 
 
+class TestSplitArtistTitle:
+    def test_returns_artist_and_title(self) -> None:
+        artist, title = resolver.split_artist_title("Daft Punk - Instant Crush")
+
+        assert artist == "Daft Punk"
+        assert title == "Instant Crush"
+
+    def test_returns_none_when_no_separator(self) -> None:
+        artist, title = resolver.split_artist_title("Instant Crush")
+
+        assert artist is None
+        assert title == "Instant Crush"
+
+    def test_strips_youtube_noise_before_splitting(self) -> None:
+        artist, title = resolver.split_artist_title(
+            "Arctic Monkeys - 505 (Official Audio)"
+        )
+
+        assert artist == "Arctic Monkeys"
+        assert title == "505"
+
+
 class TestResolveYoutube:
     def test_splits_artist_and_title_from_video_title(
         self, monkeypatch: pytest.MonkeyPatch

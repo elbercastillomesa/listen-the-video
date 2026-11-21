@@ -99,6 +99,54 @@ class TestBuildMp3:
 
         assert list(settings.data_dir.iterdir()) == []
 
+    def test_enriches_track_from_candidate_when_artist_is_missing(
+        self, monkeypatch: pytest.MonkeyPatch, make_settings: Callable[..., Settings],
+        tmp_path: Path,
+    ) -> None:
+        seen: list[Track] = []
+        candidate = Candidate(
+            title="Arctic Monkeys - 505 (Official Audio)",
+            url="https://youtu.be/x",
+        )
+
+        def fake_fetch(track: Track) -> TrackMetadata:
+            seen.append(track)
+            return TrackMetadata()
+
+        monkeypatch.setattr(pipeline, "download_audio", _fake_download)
+        monkeypatch.setattr(pipeline, "convert_to_mp3", _fake_convert)
+        monkeypatch.setattr(pipeline, "fetch_metadata", fake_fetch)
+        monkeypatch.setattr(pipeline, "tag_mp3", lambda path, meta: None)
+
+        pipeline.build_mp3(
+            Track(title="505 artic monkeys"),
+            candidate,
+            _settings(make_settings, tmp_path),
+        )
+
+        assert seen[0].artist == "Arctic Monkeys"
+        assert seen[0].title == "505"
+
+    def test_keeps_resolved_artist_when_present(
+        self, monkeypatch: pytest.MonkeyPatch, make_settings: Callable[..., Settings],
+        tmp_path: Path,
+    ) -> None:
+        seen: list[Track] = []
+
+        def fake_fetch(track: Track) -> TrackMetadata:
+            seen.append(track)
+            return TrackMetadata()
+
+        monkeypatch.setattr(pipeline, "download_audio", _fake_download)
+        monkeypatch.setattr(pipeline, "convert_to_mp3", _fake_convert)
+        monkeypatch.setattr(pipeline, "fetch_metadata", fake_fetch)
+        monkeypatch.setattr(pipeline, "tag_mp3", lambda path, meta: None)
+
+        pipeline.build_mp3(_TRACK, _CANDIDATE, _settings(make_settings, tmp_path))
+
+        assert seen[0].artist == "Daft Punk"
+        assert seen[0].title == "Instant Crush"
+
 
 class TestCleanup:
     def test_removes_the_work_dir(
