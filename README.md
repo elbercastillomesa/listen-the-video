@@ -83,3 +83,44 @@ Or inside the Docker image:
 docker run --rm -v "$PWD:/src" -w /src listen-the-video:latest \
   sh -c "pip install -q -r requirements-dev.txt && pytest"
 ```
+
+---
+
+## Future Improvements
+
+Ideas not yet scheduled. The ones under active planning live in
+[docs/FEATURE_PLAN.md](docs/FEATURE_PLAN.md).
+
+### Features
+
+- **Album / playlist batch mode**: given a Spotify album or playlist link, resolve
+  every track and deliver them as a ZIP (or sequentially), respecting the 50 MB
+  Telegram upload cap per file.
+- **Selectable output quality and formats**: choose the bitrate and container at
+  request time (MP3 320/128, FLAC, M4A), and rank YouTube candidates by
+  "official audio / highest views" so the top match is more often correct.
+- **Natural-language input**: parse free-form requests ("the live version of X
+  from 2019") with an LLM to drive resolution and disambiguation, collapsing the
+  manual pick-a-match flow into a single message.
+- **Album/group inference**: use the LLM (or Deezer album data) to auto-fill
+  album artist and sort order, especially useful for batch downloads.
+
+### Multi-user and scale
+
+- **Multi-user support**: replace the single `ALLOWED_USER_ID` with an allow-list
+  (or a `USERS` table) plus per-user rate limiting. Prerequisite for the items
+  below.
+- **Persistent library and history**: store built tracks per user to enable
+  `/history`, `/redownload`, and de-duplication by returning a cached file.
+- **Structured job storage**: move in-memory `user_data` state to a small SQLite
+  store so in-flight selections survive restarts.
+
+### Operations and robustness
+
+- **Observability**: structured JSON logging with a job id threaded through
+  resolver → search → pipeline, plus counters and per-stage timings.
+- **Automatic yt-dlp updates**: `yt-dlp` requires frequent updates; run a
+  scheduled update (or an admin `/reload`) so extraction does not quietly rot.
+- **Limits and abuse protection**: per-user daily quota, rejection of over-long
+  tracks/playlists *before* download, and a pre-conversion size check when a
+  track would exceed the Telegram cap.
