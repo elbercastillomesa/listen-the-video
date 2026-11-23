@@ -26,6 +26,17 @@ def _get_optional_int(name: str) -> int | None:
         ) from exc
 
 
+def _get_optional_float(name: str) -> float | None:
+    """Read an optional numeric environment variable."""
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return None
+    try:
+        return float(raw)
+    except ValueError as exc:
+        raise RuntimeError(f"{name} must be a number, got {raw!r}.") from exc
+
+
 @dataclass(frozen=True)
 class Settings:
     """Runtime settings for the bot."""
@@ -36,6 +47,8 @@ class Settings:
     mp3_bitrate: str
     max_upload_mb: int
     output_filename_template: str
+    max_concurrent_jobs: int
+    progress_update_interval_seconds: float
 
 
 @lru_cache(maxsize=1)
@@ -57,6 +70,19 @@ def get_settings() -> Settings:
             f"MAX_UPLOAD_MB must be a positive integer, got {max_upload_mb}."
         )
 
+    max_concurrent_jobs = _get_optional_int("MAX_CONCURRENT_JOBS")
+    if max_concurrent_jobs is not None and max_concurrent_jobs <= 0:
+        raise RuntimeError(
+            f"MAX_CONCURRENT_JOBS must be a positive integer, got {max_concurrent_jobs}."
+        )
+
+    progress_interval = _get_optional_float("PROGRESS_UPDATE_INTERVAL_SECONDS")
+    if progress_interval is not None and progress_interval < 0:
+        raise RuntimeError(
+            "PROGRESS_UPDATE_INTERVAL_SECONDS must be zero or greater, got "
+            f"{progress_interval}."
+        )
+
     return Settings(
         telegram_bot_token=token,
         allowed_user_id=_get_optional_int("ALLOWED_USER_ID"),
@@ -67,4 +93,8 @@ def get_settings() -> Settings:
         output_filename_template=os.getenv(
             "OUTPUT_FILENAME_TEMPLATE", "{artist} - {title}"
         ).strip(),
+        max_concurrent_jobs=max_concurrent_jobs or 2,
+        progress_update_interval_seconds=(
+            progress_interval if progress_interval is not None else 1.5
+        ),
     )

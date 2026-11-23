@@ -8,11 +8,13 @@ audio stream; the MP3 conversion happens in a later phase.
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 
 import yt_dlp
 
 from app.core.models import Candidate, Track
+from app.core.progress import Progress, ProgressCallback, Stage
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +22,9 @@ DEFAULT_SEARCH_LIMIT = 5
 
 # Fail fast instead of blocking the worker thread if the network stalls.
 _SOCKET_TIMEOUT = 30
+
+# yt-dlp colourises `_percent_str`; strip the escapes before showing it.
+_ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
 
 _SEARCH_OPTIONS: dict = {
     "quiet": True,
@@ -61,10 +66,15 @@ def search(query: str, limit: int = DEFAULT_SEARCH_LIMIT) -> list[Candidate]:
     return candidates
 
 
-def download_audio(url: str, dest_dir: Path) -> Path:
+def download_audio(
+    url: str, dest_dir: Path, on_progress: ProgressCallback | None = None
+) -> Path:
     """Download the best available audio stream for a URL.
 
-    Returns the path to the downloaded file (not yet converted to MP3).
+    Returns the path to the downloaded file (not yet converted to MP3). When
+    `on_progress` is given, download percentages are reported as `DOWNLOADING`
+    progress. The hook fires from yt-dlp's worker thread, so callbacks must be
+    thread-safe (the job runner schedules them onto the event loop).
     """
     dest_dir.mkdir(parents=True, exist_ok=True)
 
@@ -76,6 +86,8 @@ def download_audio(url: str, dest_dir: Path) -> Path:
         "format": "bestaudio/best",
         "outtmpl": str(dest_dir / "%(id)s.%(ext)s"),
     }
+    if on_progress is not None:
+        options["progress_hooks"] = [_download_hook(on_progress)]
 
     with yt_dlp.YoutubeDL(options) as ydl:
         info = ydl.extract_info(url, download=True)
@@ -85,6 +97,27 @@ def download_audio(url: str, dest_dir: Path) -> Path:
 
     logger.info("Downloaded audio to %s", path)
     return path
+
+
+def _download_hook(on_progress: ProgressCallback):
+    """Build a yt-dlp progress hook that reports DOWNLOADING percentages."""
+
+    def hook(data: dict) -> None:
+        if data.get("status") == "finished":
+            on_progress(Progress(Stage.DOWNLOADING, "100%"))
+            return
+        percent = _clean_percent(data.get("_percent_str"))
+        if percent:
+            on_progress(Progress(Stage.DOWNLOADING, percent))
+
+    return hook
+
+
+def _clean_percent(raw: object) -> str:
+    """Normalise yt-dlp's colourised percentage string."""
+    if not isinstance(raw, str):
+        return ""
+    return _ANSI_ESCAPE.sub("", raw).strip()
 
 
 def _candidate_from_entry(entry: dict) -> Candidate | None:

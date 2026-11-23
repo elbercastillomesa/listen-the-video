@@ -12,6 +12,7 @@ from app.config import Settings
 from app.core import pipeline
 from app.core.metadata import TrackMetadata
 from app.core.models import Candidate, Track
+from app.core.progress import Progress, Stage
 
 _TRACK = Track(title="Instant Crush", artist="Daft Punk")
 _CANDIDATE = Candidate(title="Instant Crush", url="https://youtu.be/x")
@@ -50,7 +51,9 @@ class TestBuildMp3:
     ) -> None:
         urls: list[str] = []
 
-        def fake_download(url: str, dest_dir: Path) -> Path:
+        def fake_download(
+            url: str, dest_dir: Path, on_progress: object = None
+        ) -> Path:
             urls.append(url)
             return dest_dir / "audio.webm"
 
@@ -90,7 +93,7 @@ class TestBuildMp3:
         self, monkeypatch: pytest.MonkeyPatch, make_settings: Callable[..., Settings],
         tmp_path: Path,
     ) -> None:
-        def _fail(url: str, dest_dir: Path) -> Path:
+        def _fail(url: str, dest_dir: Path, on_progress: object = None) -> Path:
             raise DownloadError("download failed")
 
         monkeypatch.setattr(pipeline, "download_audio", _fail)
@@ -189,6 +192,53 @@ class TestBuildMp3:
 
         assert built.path.name == "audio.mp3"
 
+    def test_reports_stages_in_order(
+        self, monkeypatch: pytest.MonkeyPatch, make_settings: Callable[..., Settings],
+        tmp_path: Path,
+    ) -> None:
+        calls: list[str] = []
+        _patch_steps(monkeypatch, calls, TrackMetadata())
+        reports: list[Progress] = []
+
+        pipeline.build_mp3(
+            _TRACK,
+            _CANDIDATE,
+            _settings(make_settings, tmp_path),
+            on_progress=reports.append,
+        )
+
+        assert [report.stage for report in reports] == [
+            Stage.DOWNLOADING,
+            Stage.CONVERTING,
+            Stage.TAGGING,
+        ]
+
+    def test_forwards_the_callback_to_the_downloader(
+        self, monkeypatch: pytest.MonkeyPatch, make_settings: Callable[..., Settings],
+        tmp_path: Path,
+    ) -> None:
+        seen: list[object] = []
+
+        def fake_download(
+            url: str, dest_dir: Path, on_progress: object = None
+        ) -> Path:
+            seen.append(on_progress)
+            return dest_dir / "audio.webm"
+
+        monkeypatch.setattr(pipeline, "download_audio", fake_download)
+        monkeypatch.setattr(pipeline, "convert_to_mp3", _fake_convert)
+        monkeypatch.setattr(pipeline, "fetch_metadata", lambda track: TrackMetadata())
+        monkeypatch.setattr(pipeline, "tag_mp3", lambda path, meta: None)
+
+        def report(progress: Progress) -> None:
+            return None
+
+        pipeline.build_mp3(
+            _TRACK, _CANDIDATE, _settings(make_settings, tmp_path), on_progress=report
+        )
+
+        assert seen == [report]
+
 
 class TestCleanup:
     def test_removes_the_work_dir(
@@ -213,7 +263,9 @@ def _settings(
     return make_settings(**values)
 
 
-def _fake_download(url: str, dest_dir: Path) -> Path:
+def _fake_download(
+    url: str, dest_dir: Path, on_progress: object = None
+) -> Path:
     return dest_dir / "audio.webm"
 
 
@@ -227,7 +279,9 @@ def _fake_convert(source: Path, bitrate: str, dest_dir: Path | None = None) -> P
 def _patch_steps(
     monkeypatch: pytest.MonkeyPatch, calls: list[str], metadata: TrackMetadata
 ) -> None:
-    def fake_download(url: str, dest_dir: Path) -> Path:
+    def fake_download(
+        url: str, dest_dir: Path, on_progress: object = None
+    ) -> Path:
         calls.append("download")
         return dest_dir / "audio.webm"
 

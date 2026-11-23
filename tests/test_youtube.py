@@ -8,6 +8,7 @@ import pytest
 
 from app.core import youtube
 from app.core.models import Track
+from app.core.progress import Progress, Stage
 
 
 class TestBuildQuery:
@@ -143,6 +144,77 @@ class TestDownloadAudio:
 
         with pytest.raises(RuntimeError):
             youtube.download_audio("https://youtu.be/abc", tmp_path)
+
+    def test_registers_no_hook_without_a_callback(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        captured: list[_FakeYoutubeDL] = []
+        _patch_youtube(
+            monkeypatch,
+            {"id": "abc", "_filename": str(tmp_path / "abc.webm")},
+            captured,
+        )
+
+        youtube.download_audio("https://youtu.be/abc", tmp_path)
+
+        assert "progress_hooks" not in captured[0].options
+
+    def test_reports_download_percentages(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        captured: list[_FakeYoutubeDL] = []
+        _patch_youtube(
+            monkeypatch,
+            {"id": "abc", "_filename": str(tmp_path / "abc.webm")},
+            captured,
+        )
+        seen: list[Progress] = []
+
+        youtube.download_audio(
+            "https://youtu.be/abc", tmp_path, on_progress=seen.append
+        )
+        hook = captured[0].options["progress_hooks"][0]
+        hook({"status": "downloading", "_percent_str": " 45.0%"})
+        hook({"status": "finished"})
+
+        assert seen == [
+            Progress(Stage.DOWNLOADING, "45.0%"),
+            Progress(Stage.DOWNLOADING, "100%"),
+        ]
+
+    def test_strips_ansi_escapes_from_the_percentage(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        captured: list[_FakeYoutubeDL] = []
+        _patch_youtube(
+            monkeypatch,
+            {"id": "abc", "_filename": str(tmp_path / "abc.webm")},
+            captured,
+        )
+        seen: list[Progress] = []
+
+        youtube.download_audio("https://youtu.be/abc", tmp_path, on_progress=seen.append)
+        hook = captured[0].options["progress_hooks"][0]
+        hook({"status": "downloading", "_percent_str": "\x1b[0;94m 12.3%\x1b[0m"})
+
+        assert seen == [Progress(Stage.DOWNLOADING, "12.3%")]
+
+    def test_skips_progress_without_a_percentage(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        captured: list[_FakeYoutubeDL] = []
+        _patch_youtube(
+            monkeypatch,
+            {"id": "abc", "_filename": str(tmp_path / "abc.webm")},
+            captured,
+        )
+        seen: list[Progress] = []
+
+        youtube.download_audio("https://youtu.be/abc", tmp_path, on_progress=seen.append)
+        hook = captured[0].options["progress_hooks"][0]
+        hook({"status": "downloading"})
+
+        assert seen == []
 
 
 class _FakeYoutubeDL:

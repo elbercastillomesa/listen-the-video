@@ -17,6 +17,7 @@ from app.core.converter import convert_to_mp3
 from app.core.metadata import TrackMetadata, fetch_metadata
 from app.core.models import Candidate, Track
 from app.core.naming import render_filename
+from app.core.progress import Progress, ProgressCallback, Stage, noop_progress
 from app.core.resolver import split_artist_title
 from app.core.tagger import tag_mp3
 from app.core.youtube import download_audio
@@ -34,8 +35,16 @@ class BuiltTrack:
     metadata: TrackMetadata
 
 
-def build_mp3(track: Track, candidate: Candidate, settings: Settings) -> BuiltTrack:
+def build_mp3(
+    track: Track,
+    candidate: Candidate,
+    settings: Settings,
+    on_progress: ProgressCallback = noop_progress,
+) -> BuiltTrack:
     """Download, convert and tag the chosen candidate.
+
+    `on_progress` is called before each stage; download percentages are reported
+    through the same callback by `download_audio`.
 
     Raises:
         The underlying error from whichever step fails (yt-dlp, ffmpeg or
@@ -45,10 +54,13 @@ def build_mp3(track: Track, candidate: Candidate, settings: Settings) -> BuiltTr
     work_dir = Path(tempfile.mkdtemp(prefix=_WORK_DIR_PREFIX, dir=settings.data_dir))
 
     try:
-        source = download_audio(candidate.url, work_dir)
+        on_progress(Progress(Stage.DOWNLOADING))
+        source = download_audio(candidate.url, work_dir, on_progress=on_progress)
+        on_progress(Progress(Stage.CONVERTING))
         mp3 = convert_to_mp3(source, settings.mp3_bitrate, dest_dir=work_dir)
         enriched = _enrich_track(track, candidate)
         metadata = fetch_metadata(enriched)
+        on_progress(Progress(Stage.TAGGING))
         tag_mp3(mp3, metadata)
         mp3 = _rename(mp3, metadata, enriched, settings.output_filename_template)
     except Exception:
