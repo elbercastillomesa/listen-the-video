@@ -72,7 +72,9 @@ class TestBuildMp3:
         def fake_convert(source: Path, bitrate: str, dest_dir: Path | None = None) -> Path:
             bitrates.append(bitrate)
             assert dest_dir is not None
-            return dest_dir / "audio.mp3"
+            target = dest_dir / "audio.mp3"
+            target.touch()
+            return target
 
         monkeypatch.setattr(pipeline, "download_audio", _fake_download)
         monkeypatch.setattr(pipeline, "convert_to_mp3", fake_convert)
@@ -147,6 +149,46 @@ class TestBuildMp3:
         assert seen[0].artist == "Daft Punk"
         assert seen[0].title == "Instant Crush"
 
+    def test_names_the_file_from_the_metadata_template(
+        self, monkeypatch: pytest.MonkeyPatch, make_settings: Callable[..., Settings],
+        tmp_path: Path,
+    ) -> None:
+        calls: list[str] = []
+        metadata = TrackMetadata(title="Instant Crush", artist="Daft Punk")
+        _patch_steps(monkeypatch, calls, metadata)
+
+        built = pipeline.build_mp3(_TRACK, _CANDIDATE, _settings(make_settings, tmp_path))
+
+        assert built.path.name == "Daft Punk - Instant Crush.mp3"
+        assert built.path.exists()
+
+    def test_uses_the_configured_filename_template(
+        self, monkeypatch: pytest.MonkeyPatch, make_settings: Callable[..., Settings],
+        tmp_path: Path,
+    ) -> None:
+        calls: list[str] = []
+        metadata = TrackMetadata(title="Instant Crush", artist="Daft Punk")
+        _patch_steps(monkeypatch, calls, metadata)
+        settings = _settings(
+            make_settings, tmp_path, output_filename_template="{title} - {artist}"
+        )
+
+        built = pipeline.build_mp3(_TRACK, _CANDIDATE, settings)
+
+        assert built.path.name == "Instant Crush - Daft Punk.mp3"
+
+    def test_empty_template_keeps_the_downloaded_name(
+        self, monkeypatch: pytest.MonkeyPatch, make_settings: Callable[..., Settings],
+        tmp_path: Path,
+    ) -> None:
+        calls: list[str] = []
+        _patch_steps(monkeypatch, calls, TrackMetadata())
+        settings = _settings(make_settings, tmp_path, output_filename_template="")
+
+        built = pipeline.build_mp3(_TRACK, _CANDIDATE, settings)
+
+        assert built.path.name == "audio.mp3"
+
 
 class TestCleanup:
     def test_removes_the_work_dir(
@@ -177,7 +219,9 @@ def _fake_download(url: str, dest_dir: Path) -> Path:
 
 def _fake_convert(source: Path, bitrate: str, dest_dir: Path | None = None) -> Path:
     assert dest_dir is not None
-    return dest_dir / "audio.mp3"
+    target = dest_dir / "audio.mp3"
+    target.touch()
+    return target
 
 
 def _patch_steps(
@@ -190,7 +234,9 @@ def _patch_steps(
     def fake_convert(source: Path, bitrate: str, dest_dir: Path | None = None) -> Path:
         calls.append("convert")
         assert dest_dir is not None
-        return dest_dir / "audio.mp3"
+        target = dest_dir / "audio.mp3"
+        target.touch()
+        return target
 
     def fake_fetch(track: Track) -> TrackMetadata:
         calls.append("metadata")

@@ -24,6 +24,7 @@ def test_loads_values_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DATA_DIR", "/tmp/downloads")
     monkeypatch.setenv("MP3_BITRATE", "192k")
     monkeypatch.setenv("MAX_UPLOAD_MB", "20")
+    monkeypatch.setenv("OUTPUT_FILENAME_TEMPLATE", "{title}")
 
     settings = config.get_settings()
 
@@ -32,6 +33,7 @@ def test_loads_values_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.data_dir == Path("/tmp/downloads")
     assert settings.mp3_bitrate == "192k"
     assert settings.max_upload_mb == 20
+    assert settings.output_filename_template == "{title}"
 
 
 def test_applies_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -40,6 +42,7 @@ def test_applies_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("DATA_DIR", raising=False)
     monkeypatch.delenv("MP3_BITRATE", raising=False)
     monkeypatch.delenv("MAX_UPLOAD_MB", raising=False)
+    monkeypatch.delenv("OUTPUT_FILENAME_TEMPLATE", raising=False)
 
     settings = config.get_settings()
 
@@ -47,6 +50,7 @@ def test_applies_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.data_dir == Path("data")
     assert settings.mp3_bitrate == "320k"
     assert settings.max_upload_mb == 50
+    assert settings.output_filename_template == "{artist} - {title}"
 
 
 def test_raises_when_token_is_missing(monkeypatch: pytest.MonkeyPatch) -> None:

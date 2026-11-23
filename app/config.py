@@ -35,6 +35,7 @@ class Settings:
     data_dir: Path
     mp3_bitrate: str
     max_upload_mb: int
+    output_filename_template: str
 
 
 @lru_cache(maxsize=1)
@@ -62,4 +63,8 @@ def get_settings() -> Settings:
         data_dir=Path(os.getenv("DATA_DIR", "data")).expanduser(),
         mp3_bitrate=os.getenv("MP3_BITRATE", "320k").strip() or "320k",
         max_upload_mb=max_upload_mb or 50,
+        # Empty value keeps the downloaded file's original name.
+        output_filename_template=os.getenv(
+            "OUTPUT_FILENAME_TEMPLATE", "{artist} - {title}"
+        ).strip(),
     )
