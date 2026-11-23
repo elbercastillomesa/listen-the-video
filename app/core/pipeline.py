@@ -16,6 +16,7 @@ from app.config import Settings
 from app.core.converter import convert_to_mp3
 from app.core.metadata import TrackMetadata, fetch_metadata
 from app.core.models import Candidate, Track
+from app.core.naming import render_filename
 from app.core.resolver import split_artist_title
 from app.core.tagger import tag_mp3
 from app.core.youtube import download_audio
@@ -46,8 +47,10 @@ def build_mp3(track: Track, candidate: Candidate, settings: Settings) -> BuiltTr
     try:
         source = download_audio(candidate.url, work_dir)
         mp3 = convert_to_mp3(source, settings.mp3_bitrate, dest_dir=work_dir)
-        metadata = fetch_metadata(_enrich_track(track, candidate))
+        enriched = _enrich_track(track, candidate)
+        metadata = fetch_metadata(enriched)
         tag_mp3(mp3, metadata)
+        mp3 = _rename(mp3, metadata, enriched, settings.output_filename_template)
     except Exception:
         shutil.rmtree(work_dir, ignore_errors=True)
         raise
@@ -76,6 +79,15 @@ def _enrich_track(track: Track, candidate: Candidate) -> Track:
             source_url=track.source_url,
         )
     return track
+
+
+def _rename(mp3: Path, metadata: TrackMetadata, track: Track, template: str) -> Path:
+    """Rename the tagged MP3 using the configured filename template."""
+    stem = render_filename(template, metadata, track, fallback=mp3.stem)
+    target = mp3.with_name(f"{stem}.mp3")
+    if target != mp3:
+        mp3.replace(target)
+    return target
 
 
 def cleanup(built: BuiltTrack) -> None:

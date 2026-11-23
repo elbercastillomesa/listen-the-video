@@ -21,6 +21,7 @@ def make_settings() -> Callable[..., Settings]:
             "data_dir": Path("data"),
             "mp3_bitrate": "320k",
             "max_upload_mb": 50,
+            "output_filename_template": "{artist} - {title}",
         }
         values.update(overrides)
         return Settings(**values)  # type: ignore[arg-type]
