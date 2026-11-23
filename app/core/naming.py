@@ -12,7 +12,7 @@ import re
 from app.core.metadata import TrackMetadata
 from app.core.models import Track
 
-DEFAULT_TEMPLATE = "{artist} - {title}"
+DEFAULT_TEMPLATE = "{title} - {artist}"
 
 # Characters that are unsafe in filenames across platforms, plus control chars.
 _UNSAFE_CHARS_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')

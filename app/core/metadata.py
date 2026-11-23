@@ -51,9 +51,10 @@ class TrackMetadata:
 def fetch_metadata(track: Track) -> TrackMetadata:
     """Fetch metadata for a track, cross-checking Deezer and MusicBrainz.
 
-    Deezer wins for the album and cover art, MusicBrainz for the original
-    release year and genre. Missing fields fall back to the other source and
-    finally to the values resolved from the user's input.
+    Deezer wins for the artist name, album and cover art (its search returns the
+    released display name), MusicBrainz for the original release year and genre.
+    Missing fields fall back to the other source and finally to the values
+    resolved from the user's input.
     """
     deezer = _from_deezer(track)
     brainz = _from_musicbrainz(track, album=deezer.album if deezer else None)
@@ -63,7 +64,7 @@ def fetch_metadata(track: Track) -> TrackMetadata:
 
     return TrackMetadata(
         title=_first(mb.title, dz.title, track.title),
-        artist=_first(mb.artist, dz.artist, track.artist),
+        artist=_first(dz.artist, mb.artist, track.artist),
         album=_first(dz.album, mb.album),
         date=_first(mb.date, dz.date),
         genre=_first(mb.genre, dz.genre),
@@ -281,15 +282,27 @@ def _first(*values: str | None) -> str | None:
 
 
 def _same_artist(candidate: str | None, target: str | None) -> bool:
-    """Compare two artist names, ignoring case, punctuation and features."""
+    """Compare two artist names, ignoring case, punctuation and extra words.
+
+    The comparison is word-based, so a name that merely contains another
+    (e.g. "Breve" inside "El Breve Espacio") is not treated as the same artist. A
+    trailing credit extension ("Daft Punk" vs "Daft Punk feat. Pharrell") is
+    still accepted.
+    """
     left, right = _normalize(candidate), _normalize(target)
     if not left or not right:
         return False
-    return left == right or left in right or right in left
+    return (
+        left == right
+        or left.startswith(f"{right} ")
+        or right.startswith(f"{left} ")
+    )
 
 
 def _normalize(text: str | None) -> str:
-    return "".join(char for char in (text or "").lower() if char.isalnum())
+    """Lower-case a name and reduce it to its words, ignoring punctuation."""
+    spaced = "".join(char if char.isalnum() else " " for char in (text or "").lower())
+    return " ".join(spaced.split())
 
 
 def _year(date: str | None) -> str | None:

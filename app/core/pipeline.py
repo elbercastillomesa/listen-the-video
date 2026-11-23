@@ -14,8 +14,9 @@ from pathlib import Path
 
 from app.config import Settings
 from app.core.converter import convert_to_mp3
+from app.core.matching import identify
 from app.core.metadata import TrackMetadata, fetch_metadata
-from app.core.models import Candidate, Track
+from app.core.models import Candidate, Source, Track
 from app.core.naming import render_filename
 from app.core.progress import Progress, ProgressCallback, Stage, noop_progress
 from app.core.resolver import split_artist_title
@@ -59,10 +60,11 @@ def build_mp3(
         on_progress(Progress(Stage.CONVERTING))
         mp3 = convert_to_mp3(source, settings.mp3_bitrate, dest_dir=work_dir)
         enriched = _enrich_track(track, candidate)
-        metadata = fetch_metadata(enriched)
+        identified = _identify_track(enriched)
+        metadata = fetch_metadata(identified)
         on_progress(Progress(Stage.TAGGING))
         tag_mp3(mp3, metadata)
-        mp3 = _rename(mp3, metadata, enriched, settings.output_filename_template)
+        mp3 = _rename(mp3, metadata, identified, settings.output_filename_template)
     except Exception:
         shutil.rmtree(work_dir, ignore_errors=True)
         raise
@@ -91,6 +93,18 @@ def _enrich_track(track: Track, candidate: Candidate) -> Track:
             source_url=track.source_url,
         )
     return track
+
+
+def _identify_track(track: Track) -> Track:
+    """Fix an inverted "Title - Artist" split using the metadata sources.
+
+    Only plain-text requests are re-identified: link inputs already carry an
+    authoritative artist and title, so a rewrite could only make them worse.
+    When the sources are not confident the original track is kept unchanged.
+    """
+    if track.source is not Source.TEXT or not track.artist or not track.title:
+        return track
+    return identify(track.artist, track.title) or track
 
 
 def _rename(mp3: Path, metadata: TrackMetadata, track: Track, template: str) -> Path:

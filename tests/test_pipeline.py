@@ -11,7 +11,7 @@ from yt_dlp.utils import DownloadError
 from app.config import Settings
 from app.core import pipeline
 from app.core.metadata import TrackMetadata
-from app.core.models import Candidate, Track
+from app.core.models import Candidate, Source, Track
 from app.core.progress import Progress, Stage
 
 _TRACK = Track(title="Instant Crush", artist="Daft Punk")
@@ -29,7 +29,7 @@ class TestBuildMp3:
 
         built = pipeline.build_mp3(_TRACK, _CANDIDATE, _settings(make_settings, tmp_path))
 
-        assert calls == ["download", "convert", "metadata", "tag"]
+        assert calls == ["download", "convert", "identify", "metadata", "tag"]
         assert built.metadata is metadata
 
     def test_converts_into_a_work_dir_under_data_dir(
@@ -59,6 +59,7 @@ class TestBuildMp3:
 
         monkeypatch.setattr(pipeline, "download_audio", fake_download)
         monkeypatch.setattr(pipeline, "convert_to_mp3", _fake_convert)
+        monkeypatch.setattr(pipeline, "identify", _uncertain_identify)
         monkeypatch.setattr(pipeline, "fetch_metadata", lambda track: TrackMetadata())
         monkeypatch.setattr(pipeline, "tag_mp3", lambda path, meta: None)
 
@@ -81,6 +82,7 @@ class TestBuildMp3:
 
         monkeypatch.setattr(pipeline, "download_audio", _fake_download)
         monkeypatch.setattr(pipeline, "convert_to_mp3", fake_convert)
+        monkeypatch.setattr(pipeline, "identify", _uncertain_identify)
         monkeypatch.setattr(pipeline, "fetch_metadata", lambda track: TrackMetadata())
         monkeypatch.setattr(pipeline, "tag_mp3", lambda path, meta: None)
         settings = _settings(make_settings, tmp_path, mp3_bitrate="128k")
@@ -120,6 +122,7 @@ class TestBuildMp3:
 
         monkeypatch.setattr(pipeline, "download_audio", _fake_download)
         monkeypatch.setattr(pipeline, "convert_to_mp3", _fake_convert)
+        monkeypatch.setattr(pipeline, "identify", _uncertain_identify)
         monkeypatch.setattr(pipeline, "fetch_metadata", fake_fetch)
         monkeypatch.setattr(pipeline, "tag_mp3", lambda path, meta: None)
 
@@ -144,6 +147,7 @@ class TestBuildMp3:
 
         monkeypatch.setattr(pipeline, "download_audio", _fake_download)
         monkeypatch.setattr(pipeline, "convert_to_mp3", _fake_convert)
+        monkeypatch.setattr(pipeline, "identify", _uncertain_identify)
         monkeypatch.setattr(pipeline, "fetch_metadata", fake_fetch)
         monkeypatch.setattr(pipeline, "tag_mp3", lambda path, meta: None)
 
@@ -151,6 +155,85 @@ class TestBuildMp3:
 
         assert seen[0].artist == "Daft Punk"
         assert seen[0].title == "Instant Crush"
+
+    def test_reidentifies_an_inverted_artist_and_title(
+        self, monkeypatch: pytest.MonkeyPatch, make_settings: Callable[..., Settings],
+        tmp_path: Path,
+    ) -> None:
+        seen: list[Track] = []
+
+        def fake_fetch(track: Track) -> TrackMetadata:
+            seen.append(track)
+            return TrackMetadata()
+
+        monkeypatch.setattr(pipeline, "download_audio", _fake_download)
+        monkeypatch.setattr(pipeline, "convert_to_mp3", _fake_convert)
+        monkeypatch.setattr(
+            pipeline,
+            "identify",
+            lambda first, second: Track(title="El Breve Espacio", artist="Mario Ortiz"),
+        )
+        monkeypatch.setattr(pipeline, "fetch_metadata", fake_fetch)
+        monkeypatch.setattr(pipeline, "tag_mp3", lambda path, meta: None)
+
+        pipeline.build_mp3(
+            Track(title="mario ortiz", artist="el breve espacio"),
+            _CANDIDATE,
+            _settings(make_settings, tmp_path),
+        )
+
+        assert seen[0].artist == "Mario Ortiz"
+        assert seen[0].title == "El Breve Espacio"
+        assert seen[0].source is Source.TEXT
+
+    def test_keeps_the_split_when_identification_is_uncertain(
+        self, monkeypatch: pytest.MonkeyPatch, make_settings: Callable[..., Settings],
+        tmp_path: Path,
+    ) -> None:
+        seen: list[Track] = []
+
+        def fake_fetch(track: Track) -> TrackMetadata:
+            seen.append(track)
+            return TrackMetadata()
+
+        monkeypatch.setattr(pipeline, "download_audio", _fake_download)
+        monkeypatch.setattr(pipeline, "convert_to_mp3", _fake_convert)
+        monkeypatch.setattr(pipeline, "identify", _uncertain_identify)
+        monkeypatch.setattr(pipeline, "fetch_metadata", fake_fetch)
+        monkeypatch.setattr(pipeline, "tag_mp3", lambda path, meta: None)
+
+        pipeline.build_mp3(
+            Track(title="mario ortiz", artist="el breve espacio"),
+            _CANDIDATE,
+            _settings(make_settings, tmp_path),
+        )
+
+        assert seen[0].artist == "el breve espacio"
+        assert seen[0].title == "mario ortiz"
+
+    def test_skips_identification_for_link_inputs(
+        self, monkeypatch: pytest.MonkeyPatch, make_settings: Callable[..., Settings],
+        tmp_path: Path,
+    ) -> None:
+        calls: list[tuple[str, str]] = []
+
+        def fake_identify(first: str, second: str) -> Track | None:
+            calls.append((first, second))
+            return None
+
+        monkeypatch.setattr(pipeline, "download_audio", _fake_download)
+        monkeypatch.setattr(pipeline, "convert_to_mp3", _fake_convert)
+        monkeypatch.setattr(pipeline, "identify", fake_identify)
+        monkeypatch.setattr(pipeline, "fetch_metadata", lambda track: TrackMetadata())
+        monkeypatch.setattr(pipeline, "tag_mp3", lambda path, meta: None)
+
+        pipeline.build_mp3(
+            Track(title="Instant Crush", artist="Daft Punk", source=Source.YOUTUBE),
+            _CANDIDATE,
+            _settings(make_settings, tmp_path),
+        )
+
+        assert calls == []
 
     def test_names_the_file_from_the_metadata_template(
         self, monkeypatch: pytest.MonkeyPatch, make_settings: Callable[..., Settings],
@@ -227,6 +310,7 @@ class TestBuildMp3:
 
         monkeypatch.setattr(pipeline, "download_audio", fake_download)
         monkeypatch.setattr(pipeline, "convert_to_mp3", _fake_convert)
+        monkeypatch.setattr(pipeline, "identify", _uncertain_identify)
         monkeypatch.setattr(pipeline, "fetch_metadata", lambda track: TrackMetadata())
         monkeypatch.setattr(pipeline, "tag_mp3", lambda path, meta: None)
 
@@ -263,6 +347,11 @@ def _settings(
     return make_settings(**values)
 
 
+def _uncertain_identify(first: str, second: str) -> Track | None:
+    """Stand-in for an identification that found nothing confident."""
+    return None
+
+
 def _fake_download(
     url: str, dest_dir: Path, on_progress: object = None
 ) -> Path:
@@ -296,10 +385,15 @@ def _patch_steps(
         calls.append("metadata")
         return metadata
 
+    def fake_identify(first: str, second: str) -> Track | None:
+        calls.append("identify")
+        return None
+
     def fake_tag(path: Path, meta: TrackMetadata) -> None:
         calls.append("tag")
 
     monkeypatch.setattr(pipeline, "download_audio", fake_download)
     monkeypatch.setattr(pipeline, "convert_to_mp3", fake_convert)
+    monkeypatch.setattr(pipeline, "identify", fake_identify)
     monkeypatch.setattr(pipeline, "fetch_metadata", fake_fetch)
     monkeypatch.setattr(pipeline, "tag_mp3", fake_tag)

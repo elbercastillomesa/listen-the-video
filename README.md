@@ -24,7 +24,9 @@ If you are a rights holder and want content or the project taken down, please op
 Intended flow:
 
 1. The user sends the bot a song name or a link (YouTube / Spotify).
-2. The bot resolves the track identity (artist + title).
+2. The bot resolves the track identity (artist + title). If the typed order looks
+   inverted ("Title - Artist"), it is corrected against MusicBrainz and Deezer
+   before the metadata lookup.
 3. If the input is ambiguous, the bot **shows options** for the user to pick from.
 4. It searches for and downloads the best available audio on YouTube (`yt-dlp`).
 5. It converts the audio to **MP3 320 kbps** (`ffmpeg`).
@@ -68,6 +70,7 @@ suite is deterministic and runs offline.
 | `tests/conftest.py` | Shared fixtures (`make_settings`). |
 | `tests/test_config.py` | Environment loading, defaults, and validation errors. |
 | `tests/test_resolver.py` | Input detection and track resolution for plain text, YouTube, and Spotify. |
+| `tests/test_matching.py` | Fuzzy artist/title identity resolution, including inverted input. |
 | `tests/test_youtube.py` | YouTube search and audio download (yt-dlp mocked). |
 | `tests/test_converter.py` | MP3 conversion with ffmpeg (subprocess mocked). |
 | `tests/test_metadata.py` | Metadata lookup across MusicBrainz and Deezer (both mocked). |

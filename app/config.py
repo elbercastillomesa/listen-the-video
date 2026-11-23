@@ -91,7 +91,7 @@ def get_settings() -> Settings:
         max_upload_mb=max_upload_mb or 50,
         # Empty value keeps the downloaded file's original name.
         output_filename_template=os.getenv(
-            "OUTPUT_FILENAME_TEMPLATE", "{artist} - {title}"
+            "OUTPUT_FILENAME_TEMPLATE", "{title} - {artist}"
         ).strip(),
         max_concurrent_jobs=max_concurrent_jobs or 2,
         progress_update_interval_seconds=(

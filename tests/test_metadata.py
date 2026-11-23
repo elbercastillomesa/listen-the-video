@@ -167,6 +167,42 @@ class TestFetchMetadata:
 
         assert meta.date == "2013"
 
+    def test_prefers_the_deezer_artist_name(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        track = Track(title="El Breve Espacio", artist="Mario Ortiz")
+        group = _release_group(**{"artist-credit-phrase": "Mario"})
+        _patch_musicbrainz(monkeypatch, groups=[group])
+        _patch_deezer(
+            monkeypatch,
+            search=[_deezer_item(artist={"name": "Mario Ortiz"})],
+            album=_deezer_album(),
+        )
+
+        meta = metadata.fetch_metadata(track)
+
+        assert meta.artist == "Mario Ortiz"
+
+    def test_ignores_deezer_results_whose_artist_only_contains_the_target(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        track = Track(title="Mario Ortiz", artist="El Breve Espacio")
+        wrong = _deezer_item(
+            artist={"name": "Breve"},
+            album={
+                "id": 7,
+                "title": "Breve - Live at Plush",
+                "cover_xl": "https://wrong",
+            },
+        )
+        _patch_deezer(monkeypatch, search=[wrong], album=_deezer_album())
+        _patch_musicbrainz(monkeypatch, recordings={"recording-list": []})
+
+        meta = metadata.fetch_metadata(track)
+
+        assert meta.album is None
+        assert meta.cover_url is None
+
     def test_genre_uses_the_most_common_tag(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

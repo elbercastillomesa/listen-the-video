@@ -22,12 +22,67 @@ The remaining ideas are tracked in the "Future Improvements" section of the
 
 ## Proposed implementation order
 
+0. **Bug — inverted artist/title** — corrects a typed "Title - Artist" split
+   before the metadata lookup. *(implemented)*
 1. **#2 Job queue + progress** — touches the delivery path: bounds concurrency,
    serializes per user and reports staged progress. *(implemented)*
 2. **#1 Caching** — self-contained, immediately reduces latency and API pressure.
 3. **#4 Selection state + `/cancel`** — bot-layer only, builds on #2.
 4. **#6 Richer tags** and **#7 Filename scheme** — output quality, independent.
 5. **#12 Health/status** — deferred; see the metric assessment in its section.
+
+---
+
+## Bug — inverted "Title - Artist" input
+
+> **Status:** implemented (branch `bug-metadata-fix`).
+
+**Goal.** A typed request like `el breve espacio - mario ortiz` (title first,
+artist second) was split as "Artist - Title", so the metadata lookup matched the
+wrong track and the file was named and tagged incorrectly.
+
+**Root cause.** [`split_artist_title`](../app/core/resolver.py) rigidly assumes
+"Artist - Title". With the pair inverted, Deezer's correct hit is rejected (it is
+filed under the real artist) and MusicBrainz's loose artist comparison can accept
+an unrelated band.
+
+**Design.**
+
+- New module `app/core/matching.py`:
+  - `normalize`: lower-case, strip accents (NFKD) and punctuation, collapse
+    whitespace.
+  - `similarity`: exact match `1.0`, containment `0.85`, token overlap
+    `0.6 × shared / max(len)`, else `0.0`.
+  - `compare`: scores a candidate against both orientations, returning
+    `(straight, swapped)`.
+  - `identify`: probes MusicBrainz (`search_recordings`, both orientations) and
+    Deezer's order-insensitive free-text search; returns the canonical track only
+    when `swapped >= IDENTITY_THRESHOLD` **and** `swapped > straight`, so a
+    correctly typed pair is never rewritten.
+- [`pipeline.build_mp3`](../app/core/pipeline.py#L39) runs a new `_identify_track`
+  step between candidate selection and `fetch_metadata`. Only `Source.TEXT`
+  requests are re-identified; link inputs keep their authoritative artist/title.
+- [`metadata._same_artist`](../app/core/metadata.py) tightened to a word-based
+  comparison (exact or whole-word prefix) so a substring of the target no longer
+  matches; the merged artist name now prefers Deezer over MusicBrainz.
+
+**Config (new).** None. The confidence threshold is a module constant
+(`IDENTITY_THRESHOLD`).
+
+**Edge cases / risks.**
+
+- Both sources are best-effort: a network error logs a warning and yields no
+  candidates, leaving the original split untouched.
+- Low confidence keeps the current split (the caller's fallback), so behaviour is
+  unchanged when the sources disagree.
+- Known caveat: for an inverted pair the resolver can land on a remix/edit rather
+  than the original studio recording when both score equally.
+
+**Tests.** `tests/test_matching.py` (normalization, scoring, orientation
+comparison, both-source lookup and error tolerance); extended
+`tests/test_pipeline.py` (step order, re-identification, uncertain fallback,
+link inputs skipped) and `tests/test_metadata.py` (Deezer artist priority,
+rejecting substring-only artist matches).
 
 ---
 
@@ -238,7 +293,7 @@ downloads sort cleanly (`Artist - Title.mp3` by default).
 
 | Variable | Default | Notes |
 | --- | --- | --- |
-| `OUTPUT_FILENAME_TEMPLATE` | `{artist} - {title}` | Empty → keep current stem. |
+| `OUTPUT_FILENAME_TEMPLATE` | `{title} - {artist}` | Empty → keep current stem. |
 
 **Edge cases / risks.**
 
@@ -313,8 +368,8 @@ persist a small append-only record instead. Metrics are deferred for now.
 ## Cross-cutting summary
 
 **New files:** `app/core/cache.py`, `app/core/progress.py`, `app/bot/jobs.py`,
-`app/core/naming.py`, `app/core/metrics.py`, `app/healthcheck.py`, plus matching
-tests.
+`app/core/naming.py`, `app/core/matching.py`, `app/core/metrics.py`,
+`app/healthcheck.py`, plus matching tests.
 
 **Modified files:** `app/config.py`, `app/core/metadata.py`, `app/core/tagger.py`,
 `app/core/pipeline.py`, `app/core/youtube.py`, `app/bot/handlers.py`,

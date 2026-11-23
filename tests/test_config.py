@@ -56,7 +56,7 @@ def test_applies_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.data_dir == Path("data")
     assert settings.mp3_bitrate == "320k"
     assert settings.max_upload_mb == 50
-    assert settings.output_filename_template == "{artist} - {title}"
+    assert settings.output_filename_template == "{title} - {artist}"
     assert settings.max_concurrent_jobs == 2
     assert settings.progress_update_interval_seconds == 1.5
 
