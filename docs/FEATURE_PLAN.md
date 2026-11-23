@@ -22,11 +22,12 @@ The remaining ideas are tracked in the "Future Improvements" section of the
 
 ## Proposed implementation order
 
-1. **#12 Health/status** — small, adds a metrics seam later features reuse.
-2. **#1 Caching** — self-contained, immediately reduces latency.
-3. **#2 Job queue + progress** — touches the delivery path; builds on #12 metrics.
-4. **#4 Selection state + `/cancel`** — bot-layer only, builds on #2.
-5. **#6 Richer tags** and **#7 Filename scheme** — output quality, independent.
+1. **#2 Job queue + progress** — touches the delivery path: bounds concurrency,
+   serializes per user and reports staged progress.
+2. **#1 Caching** — self-contained, immediately reduces latency and API pressure.
+3. **#4 Selection state + `/cancel`** — bot-layer only, builds on #2.
+4. **#6 Richer tags** and **#7 Filename scheme** — output quality, independent.
+5. **#12 Health/status** — deferred; see the metric assessment in its section.
 
 ---
 
