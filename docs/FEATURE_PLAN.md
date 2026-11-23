@@ -271,6 +271,27 @@ liveness check.
 - Record a `started_at` when [`main()`](../app/main.py#L42) boots so uptime is
   accurate.
 
+**Metric assessment (revisit before implementing).**
+
+Not every counter above earns its place in a single-user bot. A blunt value
+check, recorded here so the design can be trimmed later:
+
+| Candidate metric | Worth it? | Why |
+| --- | --- | --- |
+| Failure count **per pipeline stage** + last error | **Yes** | The real pain: "3 of last 20 jobs died at download" tells you yt-dlp needs updating. |
+| yt-dlp / ffmpeg versions | **Yes** | Not a metric, but the single most useful diagnostic — yt-dlp rots often. |
+| Success/failure totals, uptime | Yes (cheap) | Baseline sanity. |
+| `DATA_DIR` disk usage | Yes (cheap) | Cache + leftover work dirs can grow unbounded. |
+| Last failure message + timestamp | Yes | Faster than grepping logs. |
+| Per-stage **average** duration | Marginal | Averages hide the outliers that matter; better to log slow jobs. |
+| Cache hits/misses | Later | Only meaningful once #1 exists. |
+| Queue depth | Later | Only meaningful once #2 exists. |
+| Prometheus/Grafana export, histograms, dashboards | **No** | Over-engineering for one user. |
+
+Caveat: the counters described above are in-memory, so they reset on every
+container restart — and this project restarts often. If history is wanted,
+persist a small append-only record instead. Metrics are deferred for now.
+
 **Config (new).** None required. Optional `HEALTHCHECK_TIMEOUT` for the script.
 
 **Edge cases / risks.**
