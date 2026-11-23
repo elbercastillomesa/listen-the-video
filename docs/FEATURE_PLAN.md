@@ -23,7 +23,7 @@ The remaining ideas are tracked in the "Future Improvements" section of the
 ## Proposed implementation order
 
 1. **#2 Job queue + progress** — touches the delivery path: bounds concurrency,
-   serializes per user and reports staged progress.
+   serializes per user and reports staged progress. *(implemented)*
 2. **#1 Caching** — self-contained, immediately reduces latency and API pressure.
 3. **#4 Selection state + `/cancel`** — bot-layer only, builds on #2.
 4. **#6 Richer tags** and **#7 Filename scheme** — output quality, independent.
@@ -76,6 +76,9 @@ HTTP request (count mocked calls).
 ---
 
 ## #2 — Job queue with progress feedback
+
+> **Status:** implemented (branch `job-queue-progress`). Progress reporting,
+> concurrency caps and the stage enum match the design below.
 
 **Goal.** Replace the fire-and-forget `asyncio.to_thread(build_mp3, ...)` in
 [`_deliver_track`](../app/bot/handlers.py#L199) with a small job runner that

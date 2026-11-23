@@ -32,6 +32,10 @@ Intended flow:
 7. It writes ID3 tags and embeds the cover art (`mutagen`).
 8. It sends the MP3 back to the user in the Telegram chat.
 
+While a track is being prepared, a status message reports the current stage
+(downloading, converting, tagging, uploading). Builds are queued: a global cap
+bounds how many run at once and a user's own jobs run one after another.
+
 ## Status
 
 In development. The initial version targets **personal use** (single user). Planned follow-ups: multi-user support, song library, AI integration (natural-language parsing and disambiguation), and automatic transcription/tagging.
@@ -69,8 +73,9 @@ suite is deterministic and runs offline.
 | `tests/test_metadata.py` | Metadata lookup across MusicBrainz and Deezer (both mocked). |
 | `tests/test_tagger.py` | ID3 tagging and cover art embedding with mutagen. |
 | `tests/test_keyboards.py` | Candidate buttons and callback data parsing. |
-| `tests/test_pipeline.py` | Download, convert and tag pipeline plus work-dir cleanup. |
-| `tests/test_handlers.py` | Commands, search, result selection, MP3 delivery, authorization, and the error handler. |
+| `tests/test_pipeline.py` | Download, convert and tag pipeline plus work-dir cleanup and progress reporting. |
+| `tests/test_jobs.py` | Job runner: progress edits, per-user serialization, global concurrency cap, and delivery errors. |
+| `tests/test_handlers.py` | Commands, search, result selection, job dispatch, authorization, and the error handler. |
 
 ```bash
 pip install -r requirements-dev.txt

@@ -22,6 +22,9 @@ def make_settings() -> Callable[..., Settings]:
             "mp3_bitrate": "320k",
             "max_upload_mb": 50,
             "output_filename_template": "{artist} - {title}",
+            "max_concurrent_jobs": 2,
+            # Zero keeps every progress edit in tests deterministic.
+            "progress_update_interval_seconds": 0.0,
         }
         values.update(overrides)
         return Settings(**values)  # type: ignore[arg-type]

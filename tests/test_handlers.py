@@ -3,20 +3,15 @@
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 from typing import Callable
 from unittest.mock import AsyncMock, MagicMock
 
 from telegram import Update
-from telegram.error import TelegramError
 from yt_dlp.utils import DownloadError
 
-from app.bot import handlers
+from app.bot import handlers, jobs
 from app.config import Settings
-from app.core.converter import ConversionError
-from app.core.metadata import TrackMetadata
 from app.core.models import Candidate, Source, Track
-from app.core.pipeline import BuiltTrack
 
 
 def _make_message() -> MagicMock:
@@ -48,10 +43,18 @@ def _make_update(
 
 
 def _make_context() -> MagicMock:
-    """Build a fake context backed by a real user_data dict."""
+    """Build a fake context backed by real user_data and bot_data dicts."""
     context = MagicMock()
     context.user_data = {}
+    context.bot_data = {}
     return context
+
+
+def _make_runner() -> MagicMock:
+    """Build a fake job runner that records spawns without running them."""
+    runner = MagicMock()
+    runner.spawn = MagicMock()
+    return runner
 
 
 def _make_callback_update(data: str | None = "pick:0") -> MagicMock:
@@ -63,17 +66,6 @@ def _make_callback_update(data: str | None = "pick:0") -> MagicMock:
     update.callback_query.edit_message_text = AsyncMock()
     update.callback_query.message = _make_message()
     return update
-
-
-def _make_built(tmp_path: Path, *, size: int = 10) -> BuiltTrack:
-    """Build a BuiltTrack backed by a real file inside a work directory."""
-    work_dir = tmp_path / "work"
-    work_dir.mkdir(exist_ok=True)
-    path = work_dir / "song.mp3"
-    path.write_bytes(b"x" * size)
-    return BuiltTrack(
-        path=path, metadata=TrackMetadata(title="Song", artist="Band")
-    )
 
 
 def _with_selection(context: MagicMock, candidate: Candidate | None = None) -> None:
@@ -288,18 +280,13 @@ class TestHandleMessage:
 
 
 class TestHandleCallback:
-    def test_delivers_the_selected_track(
-        self,
-        monkeypatch,
-        make_settings: Callable[..., Settings],
-        tmp_path: Path,
+    def test_queues_the_selected_track(
+        self, monkeypatch, make_settings: Callable[..., Settings]
     ) -> None:
         monkeypatch.setattr(handlers, "get_settings", lambda: make_settings())
-        built = _make_built(tmp_path)
-        monkeypatch.setattr(
-            handlers, "build_mp3", lambda track, candidate, settings: built
-        )
+        runner = _make_runner()
         context = _make_context()
+        context.bot_data[jobs.BOT_DATA_KEY] = runner
         _with_selection(context, Candidate(title="First", url="u1"))
         update = _make_callback_update("pick:0")
 
@@ -307,111 +294,22 @@ class TestHandleCallback:
 
         (selected,) = update.callback_query.edit_message_text.await_args.args
         assert "First" in selected
-        audio = update.callback_query.message.reply_audio.await_args.kwargs
-        assert audio["title"] == "Song"
-        assert audio["performer"] == "Band"
-        assert audio["filename"] == "song.mp3"
-
-    def test_removes_the_work_dir_after_sending(
-        self,
-        monkeypatch,
-        make_settings: Callable[..., Settings],
-        tmp_path: Path,
-    ) -> None:
-        monkeypatch.setattr(handlers, "get_settings", lambda: make_settings())
-        built = _make_built(tmp_path)
-        work_dir = built.path.parent
-        monkeypatch.setattr(
-            handlers, "build_mp3", lambda track, candidate, settings: built
+        update.callback_query.message.reply_text.assert_awaited_once_with(
+            handlers.PREPARING_TEXT
         )
-        context = _make_context()
-        _with_selection(context)
-
-        asyncio.run(handlers.handle_callback(_make_callback_update(), context))
-
-        assert not work_dir.exists()
-
-    def test_reports_build_failure(
-        self,
-        monkeypatch,
-        make_settings: Callable[..., Settings],
-    ) -> None:
-        monkeypatch.setattr(handlers, "get_settings", lambda: make_settings())
-
-        def _fail(track: Track, candidate: Candidate, settings: Settings) -> BuiltTrack:
-            raise ConversionError("ffmpeg failed")
-
-        monkeypatch.setattr(handlers, "build_mp3", _fail)
-        context = _make_context()
-        _with_selection(context)
-        update = _make_callback_update()
-
-        asyncio.run(handlers.handle_callback(update, context))
-
-        update.callback_query.message.status.edit_text.assert_awaited_once_with(
-            handlers.BUILD_FAILED_TEXT
-        )
-        update.callback_query.message.reply_audio.assert_not_awaited()
-
-    def test_reports_file_over_the_upload_limit(
-        self,
-        monkeypatch,
-        make_settings: Callable[..., Settings],
-        tmp_path: Path,
-    ) -> None:
-        settings = make_settings(max_upload_mb=1)
-        monkeypatch.setattr(handlers, "get_settings", lambda: settings)
-        built = _make_built(tmp_path, size=1_100_000)
-        monkeypatch.setattr(
-            handlers, "build_mp3", lambda track, candidate, settings: built
-        )
-        context = _make_context()
-        _with_selection(context)
-        update = _make_callback_update()
-
-        asyncio.run(handlers.handle_callback(update, context))
-
-        (message,) = update.callback_query.message.status.edit_text.await_args.args
-        assert "over the 1 MB" in message
-        update.callback_query.message.reply_audio.assert_not_awaited()
-
-    def test_reports_send_failure(
-        self,
-        monkeypatch,
-        make_settings: Callable[..., Settings],
-        tmp_path: Path,
-    ) -> None:
-        monkeypatch.setattr(handlers, "get_settings", lambda: make_settings())
-        built = _make_built(tmp_path)
-        work_dir = built.path.parent
-        monkeypatch.setattr(
-            handlers, "build_mp3", lambda track, candidate, settings: built
-        )
-        context = _make_context()
-        _with_selection(context)
-        update = _make_callback_update()
-        update.callback_query.message.reply_audio = AsyncMock(
-            side_effect=TelegramError("too big")
-        )
-
-        asyncio.run(handlers.handle_callback(update, context))
-
-        update.callback_query.message.status.edit_text.assert_awaited_once_with(
-            handlers.SEND_FAILED_TEXT
-        )
-        assert not work_dir.exists()
+        (user_id, status, message, track, candidate) = runner.spawn.call_args.args
+        assert user_id == 1
+        assert status is update.callback_query.message.status
+        assert message is update.callback_query.message
+        assert track == context.user_data["track"]
+        assert candidate.url == "u1"
 
     def test_answers_the_callback_query(
-        self,
-        monkeypatch,
-        make_settings: Callable[..., Settings],
-        tmp_path: Path,
+        self, monkeypatch, make_settings: Callable[..., Settings]
     ) -> None:
         monkeypatch.setattr(handlers, "get_settings", lambda: make_settings())
-        monkeypatch.setattr(
-            handlers, "build_mp3", lambda track, candidate, settings: _make_built(tmp_path)
-        )
         context = _make_context()
+        context.bot_data[jobs.BOT_DATA_KEY] = _make_runner()
         _with_selection(context)
         update = _make_callback_update()
 
@@ -482,6 +380,28 @@ class TestHandleCallback:
         update.callback_query = None
 
         asyncio.run(handlers.handle_callback(update, _make_context()))
+
+
+class TestGetRunner:
+    def test_creates_a_runner_once(
+        self, make_settings: Callable[..., Settings]
+    ) -> None:
+        context = _make_context()
+
+        first = handlers._get_runner(context, make_settings())
+        second = handlers._get_runner(context, make_settings())
+
+        assert first is second
+        assert context.bot_data[jobs.BOT_DATA_KEY] is first
+
+    def test_returns_the_stored_runner(
+        self, make_settings: Callable[..., Settings]
+    ) -> None:
+        context = _make_context()
+        stored = MagicMock()
+        context.bot_data[jobs.BOT_DATA_KEY] = stored
+
+        assert handlers._get_runner(context, make_settings()) is stored
 
 
 class TestErrorHandler:
